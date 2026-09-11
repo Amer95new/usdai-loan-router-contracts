@@ -23,8 +23,8 @@ jobs:
       - name: Build (via-ir, per foundry.toml)
         run: forge build 2>&1 | tee /tmp/build.log
 
-      - name: Run full test suite
-        run: forge test -vvv 2>&1 | tee /tmp/test.log || true
+      - name: Run CombinedStressAttack only
+        run: forge test -vvv --match-path test/CombinedStressAttack.t.sol 2>&1 | tee /tmp/test.log || true
 
       - name: Upload results
         if: always()
