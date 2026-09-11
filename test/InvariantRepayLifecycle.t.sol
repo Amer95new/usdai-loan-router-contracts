@@ -71,14 +71,22 @@ contract RepayLifecycleHandler {
     }
 
     /**
-     * @notice Deliberately attempt a SECOND repay() call using whatever
-     * the current quote is (which should be 0 once the loan is fully
-     * Repaid). This is the core attack attempt: try to extract value or
-     * corrupt state via a redundant/late repayment.
+     * @notice Deliberately attempt a SECOND repay() call while the loan is
+     * NOT Active (Repaid/Breached/Liquidated). Explicitly gated on the
+     * loan's real on-chain status first - unlike an earlier draft of this
+     * handler, which called this "double repay" but never actually checked
+     * status and so mostly just re-executed ordinary, legitimate mid-life
+     * repayments (a false-positive-prone test design, not a real attack).
+     * This version only counts/attempts the call once the loan has
+     * genuinely already left Active status, which is the only state in
+     * which a repay() success would actually be a bug.
      */
     function attemptDoubleRepay(
         uint256 amountSeed
     ) external {
+        ILoanRouterV2.LoanStatus status = this.loanStatus();
+        if (status == ILoanRouterV2.LoanStatus.Active) return;
+
         (uint256 principal, uint256 interest, uint256 fee) = router.quote(loanTerms);
         uint256 quoted = principal + interest + fee;
 
@@ -171,15 +179,13 @@ contract InvariantRepayLifecycleTest is RouterFixture {
     }
 
     /**
-     * @notice Sanity invariant: the handler's ghost-tracked cumulative
-     * payments must never exceed what the router's own quote() function
-     * would allow across the loan's full lifecycle by more than the
-     * bounded rounding tolerance already verified in
-     * FuzzTrancheRounding.t.sol (a handful of wei per tranche, not a
-     * meaningful amount).
+     * @notice Sanity invariant: once the loan has left Active status, no
+     * further amount should ever be recorded as having been paid in via
+     * the post-closure attack path - this must move in lockstep with
+     * invariant_NoRepaySucceedsOutsideActiveStatus (kept separate so a
+     * regression shows up under two independently-worded checks).
      */
-    function invariant_TotalPaidInIsNonNegativeAndTracked() public view {
-        assert(handler.totalBorrowerPaidIn() >= 0); // trivially true for uint256, kept for report clarity
-        assert(handler.successfulRepayCount() <= handler.revertedDoubleRepayAttempts() + 10);
+    function invariant_NoValueExtractedAfterLoanClosed() public view {
+        assert(handler.revertedDoubleRepaySuccesses() == 0);
     }
 }
