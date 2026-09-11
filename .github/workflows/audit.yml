@@ -1,0 +1,37 @@
+name: audit-debug
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show forge version
+        run: forge --version
+
+      - name: Build (via-ir, per foundry.toml)
+        run: forge build 2>&1 | tee /tmp/build.log
+
+      - name: Run full test suite
+        run: forge test -vvv 2>&1 | tee /tmp/test.log || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loan-router-audit-results
+          path: |
+            /tmp/build.log
+            /tmp/test.log
+          if-no-files-found: warn
