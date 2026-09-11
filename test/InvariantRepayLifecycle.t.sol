@@ -23,7 +23,7 @@ import {LoanLogicV2} from "src/LoanLogicV2.sol";
  * token than it should relative to what borrowers actually paid in.
  */
 contract RepayLifecycleHandler {
-    RouterFixture internal immutable fixture_;
+    InvariantRepayLifecycleTest internal immutable fixture_;
     ILoanRouterV2 internal immutable router;
     address internal immutable borrower;
     address internal currencyToken;
@@ -37,7 +37,7 @@ contract RepayLifecycleHandler {
     ILoanRouterV2.LoanTermsV2 internal loanTerms;
 
     constructor(
-        RouterFixture fixture,
+        InvariantRepayLifecycleTest fixture,
         address router_,
         ILoanRouterV2.LoanTermsV2 memory terms,
         address borrower_
