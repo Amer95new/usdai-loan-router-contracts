@@ -242,11 +242,32 @@ contract StakedUSDaiAccrualAttackTest is Test {
         return accrued * FIXED_POINT_SCALE;
     }
 
+    function _debugDumpState() internal {
+        (uint256 accruedRaw, uint256 rateRaw, uint64 tsRaw) = _readAccrual(USDAI);
+        emit log_named_uint("  [raw] accrual.accrued", accruedRaw);
+        emit log_named_uint("  [raw] accrual.rate", rateRaw);
+        emit log_named_uint("  [raw] accrual.timestamp", tsRaw);
+        emit log_named_uint("  [raw] block.timestamp", block.timestamp);
+        emit log_named_uint("  [my] baselineAccruedRaw", baselineAccruedRaw);
+        emit log_named_uint("  [my] backgroundRate", backgroundRate);
+        emit log_named_uint("  [my] baselineTimestamp", baselineTimestamp);
+        for (uint256 i; i < shadowLoans.length; i++) {
+            emit log_named_uint(string.concat("  [my] shadowLoans[", vm.toString(i), "].rate"), shadowLoans[i].rate);
+            emit log_named_uint(
+                string.concat("  [my] shadowLoans[", vm.toString(i), "].lastTouch"), shadowLoans[i].lastTouch
+            );
+            emit log_named_string(
+                string.concat("  [my] shadowLoans[", vm.toString(i), "].open"), shadowLoans[i].open ? "true" : "false"
+            );
+        }
+    }
+
     function _assertGroundTruthMatches(
         string memory label
     ) internal {
         uint256 expected = _groundTruthAccrued();
         uint256 actual = _actualAccrued();
+        _debugDumpState();
         // backgroundRate/baselineAccruedRaw/baselineTimestamp are now EXACT values read directly
         // from storage (no calibration/estimation), so the only remaining source of expected
         // slack is loanRouterBalances()'s own single FIXED_POINT_SCALE integer-division
