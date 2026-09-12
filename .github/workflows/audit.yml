@@ -23,8 +23,8 @@ jobs:
       - name: Build (via-ir, per foundry.toml)
         run: forge build 2>&1 | tee /tmp/build.log
 
-      - name: Run StakedUSDai accrual attack
-        run: forge test -vvv --match-path test/StakedUSDaiAccrualAttack.t.sol 2>&1 | tee /tmp/test.log || true
+      - name: Run accrual diagnostic
+        run: forge test -vvvv --match-path test/StakedUSDaiAccrualDiagnostic.t.sol 2>&1 | tee /tmp/test.log || true
 
       - name: Upload results
         if: always()
