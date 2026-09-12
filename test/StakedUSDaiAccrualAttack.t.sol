@@ -90,30 +90,67 @@ contract StakedUSDaiAccrualAttackTest is Test {
     }
 
     ShadowLoan[] internal shadowLoans;
-    uint256 internal backgroundRate; // real, pre-existing on-chain rate at test start (untouched "phantom loan")
-    uint256 internal baselineAccruedRaw; // real, pre-existing accrued value (in raw/unscaled units) as of t0
+    uint256 internal backgroundRate; // EXACT real on-chain accrual.rate at t0 (read from storage, not estimated)
+    uint256 internal baselineAccruedRaw; // EXACT real on-chain accrual.accrued at t0 (read from storage)
+    uint64 internal baselineTimestamp; // EXACT real on-chain accrual.timestamp at t0 (read from storage)
     uint64 internal t0;
+
+    /*------------------------------------------------------------------------*/
+    /* Direct storage access to StakedUSDai's namespaced `Loans` struct -
+     * avoids ANY estimation/calibration of the real background accrual rate,
+     * which proved unreliable (a first attempt at estimating it via a
+     * before/after-warp read of loanRouterBalances() produced small but real
+     * drift that could not be cleanly distinguished from a genuine contract
+     * bug without this). Layout, derived from the verified deployed source:
+     *
+     *   bytes32 LOANS_STORAGE_LOCATION = keccak256(...) & ~0xff;  (ERC-7201)
+     *   struct Loans {
+     *       EnumerableSet.AddressSet currencyTokens;      // slots +0, +1
+     *       mapping(address => Repayment) repaymentBalances; // slot +2
+     *       mapping(address => uint256) pendingBalances;     // slot +3
+     *       mapping(address => Accrual) interestAccruals;    // slot +4
+     *       mapping(bytes32 => Loan) loan;                   // slot +5
+     *   }
+     *   struct Accrual { uint256 accrued; uint256 rate; uint64 timestamp; }
+     *
+     * EnumerableSet.AddressSet wraps a Set{ bytes32[] _values; mapping(...)
+     * _positions; } - confirmed from the actual verified EnumerableSet.sol
+     * source (OpenZeppelin, unchanged layout for years): exactly 2 slots.
+     */
+    bytes32 internal constant LOANS_STORAGE_LOCATION =
+        0xeedf9bea8709bd441d5da250df505e80fc82bec74f9f1df28edf19fa1ed4bd00;
+    uint256 internal constant INTEREST_ACCRUALS_SLOT_OFFSET = 4;
+
+    function _accrualEntrySlot(
+        address token
+    ) internal pure returns (bytes32) {
+        bytes32 mappingBaseSlot = bytes32(uint256(LOANS_STORAGE_LOCATION) + INTEREST_ACCRUALS_SLOT_OFFSET);
+        return keccak256(abi.encode(token, mappingBaseSlot));
+    }
+
+    function _readAccrual(
+        address token
+    ) internal view returns (uint256 accrued, uint256 rate, uint64 timestamp) {
+        bytes32 base = _accrualEntrySlot(token);
+        accrued = uint256(vm.load(SUSDAI, base));
+        rate = uint256(vm.load(SUSDAI, bytes32(uint256(base) + 1)));
+        timestamp = uint64(uint256(vm.load(SUSDAI, bytes32(uint256(base) + 2))));
+    }
 
     function setUp() public {
         vm.createSelectFork(vm.envString("ARBITRUM_RPC_URL"));
 
-        // Back out the real, pre-existing aggregate rate for the USDai currency bucket by
-        // reading loanRouterBalances() before/after a large calibration warp (large window
-        // keeps the relative impact of the view function's own FIXED_POINT_SCALE integer-division
-        // truncation negligible - with only ~1000s it would dominate the signal over the long,
-        // multi-week horizons the attack scenarios below actually warp through).
-        uint256 CALIBRATION_WINDOW = 10_000_000; // ~116 days
-        (, uint256 accruedBeforeWarp) = IStakedUSDaiViewsTest(SUSDAI).loanRouterBalances();
-        vm.warp(block.timestamp + CALIBRATION_WINDOW);
-        (, uint256 accruedAfterWarp) = IStakedUSDaiViewsTest(SUSDAI).loanRouterBalances();
-        backgroundRate = (accruedAfterWarp - accruedBeforeWarp) * FIXED_POINT_SCALE / CALIBRATION_WINDOW;
+        (uint256 accrued0, uint256 rate0, uint64 timestamp0) = _readAccrual(USDAI);
 
-        // The real contract already carries a large pre-existing accrued balance from actual
-        // protocol history (real loans, real elapsed time) - the ground-truth ledger must start
-        // from THIS absolute baseline, not from zero, since _actualAccrued() always reads the
-        // full absolute value, never just the delta since our test began.
-        baselineAccruedRaw = accruedAfterWarp * FIXED_POINT_SCALE;
+        // Sanity: independently confirm our derived slot actually matches what the public
+        // view function reports (both should describe the same real, pre-existing state).
+        (, uint256 accruedViaView) = IStakedUSDaiViewsTest(SUSDAI).loanRouterBalances();
+        uint256 accruedViaStorage = (accrued0 + rate0 * (block.timestamp - timestamp0)) / FIXED_POINT_SCALE;
+        require(accruedViaStorage == accruedViaView, "storage slot derivation mismatch - aborting");
 
+        baselineAccruedRaw = accrued0;
+        backgroundRate = rate0;
+        baselineTimestamp = timestamp0;
         t0 = uint64(block.timestamp);
     }
 
@@ -186,7 +223,7 @@ contract StakedUSDaiAccrualAttackTest is Test {
     }
 
     function _groundTruthAccrued() internal view returns (uint256 total) {
-        total = baselineAccruedRaw + backgroundRate * (block.timestamp - t0);
+        total = baselineAccruedRaw + backgroundRate * (block.timestamp - baselineTimestamp);
         for (uint256 i; i < shadowLoans.length; i++) {
             if (shadowLoans[i].open) {
                 total += shadowLoans[i].rate * (block.timestamp - shadowLoans[i].lastTouch);
@@ -204,13 +241,12 @@ contract StakedUSDaiAccrualAttackTest is Test {
     ) internal {
         uint256 expected = _groundTruthAccrued();
         uint256 actual = _actualAccrued();
-        // Tolerance covers (a) loanRouterBalances()'s own FIXED_POINT_SCALE integer-division
-        // truncation on read, and (b) the backgroundRate calibration's own residual noise
-        // compounding over the elapsed test timespan. Deliberately generous (1e21) relative to
-        // FIXED_POINT_SCALE (1e18) - a genuine accrual-formula bug in these scenarios (loans
-        // sized at 1e5-1e6 ether, rates 1-1000, spans of days-to-weeks) produces discrepancies
-        // many orders of magnitude larger than this, so this tolerance cannot mask a real finding.
-        uint256 tolerance = 1e21;
+        // backgroundRate/baselineAccruedRaw/baselineTimestamp are now EXACT values read directly
+        // from storage (no calibration/estimation), so the only remaining source of expected
+        // slack is loanRouterBalances()'s own single FIXED_POINT_SCALE integer-division
+        // truncation on read (strictly < FIXED_POINT_SCALE). A small safety margin is kept for
+        // truncation in intermediate per-loan arithmetic across up to a handful of loans.
+        uint256 tolerance = FIXED_POINT_SCALE * 10;
         emit log_named_string("check", label);
         emit log_named_uint("  expected (ground truth)", expected);
         emit log_named_uint("  actual (on-chain)      ", actual);
