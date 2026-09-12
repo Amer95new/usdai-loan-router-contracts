@@ -189,9 +189,14 @@ contract StakedUSDaiAccrualAttackTest is Test {
         vm.prank(LOAN_ROUTER_V2);
         IStakedUSDaiLoanRouterHooksTest(SUSDAI).onLoanOriginated(terms, loanHash, 0);
 
+        emit log_named_uint("  [_originate] block.timestamp at push time", block.timestamp);
+        uint64 nowTs = uint64(block.timestamp);
+        emit log_named_uint("  [_originate] nowTs (cast)", nowTs);
+
         shadowLoans.push(
-            ShadowLoan({hash: loanHash, rate: rate * principal, pendingBalance: principal, lastTouch: uint64(block.timestamp), open: true})
+            ShadowLoan({hash: loanHash, rate: rate * principal, pendingBalance: principal, lastTouch: nowTs, open: true})
         );
+        emit log_named_uint("  [_originate] pushed lastTouch readback", shadowLoans[shadowLoans.length - 1].lastTouch);
         return shadowLoans.length - 1;
     }
 
