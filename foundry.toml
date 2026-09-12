@@ -15,6 +15,10 @@ ignored_warnings_from = ["test", "lib"]
 [profile.exhaustive]
 ffi = true
 
+[invariant]
+runs = 48
+depth = 40
+
 [fmt]
 bracket_spacing = false
 int_types = "long"
