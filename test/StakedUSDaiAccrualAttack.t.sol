@@ -172,7 +172,13 @@ contract StakedUSDaiAccrualAttackTest is Test {
             trancheSpecs: tranches,
             feeSpecs: new ILoanRouterV2.FeeSpec[](0),
             approvalAddresses: new address[](0),
-            options: abi.encode(rate, principal, block.timestamp, gasleft())
+            // MUST be fully deterministic (rate, principal) only - this function is called
+            // AGAIN on every repay to rebuild identical terms for hashing. An earlier version
+            // included gasleft()/block.timestamp here, which silently produced a DIFFERENT hash
+            // on rebuild, causing repay calls to operate on an uninitialized phantom loan entry
+            // instead of the real one - that was the actual root cause of the drift found by
+            // this test, not a contract bug (confirmed via StakedUSDaiAccrualDiagnostic.t.sol).
+            options: abi.encode(rate, principal)
         });
     }
 
