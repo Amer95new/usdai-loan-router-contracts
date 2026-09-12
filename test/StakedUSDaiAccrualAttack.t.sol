@@ -91,6 +91,7 @@ contract StakedUSDaiAccrualAttackTest is Test {
 
     ShadowLoan[] internal shadowLoans;
     uint256 internal backgroundRate; // real, pre-existing on-chain rate at test start (untouched "phantom loan")
+    uint256 internal baselineAccruedRaw; // real, pre-existing accrued value (in raw/unscaled units) as of t0
     uint64 internal t0;
 
     function setUp() public {
@@ -106,6 +107,12 @@ contract StakedUSDaiAccrualAttackTest is Test {
         vm.warp(block.timestamp + CALIBRATION_WINDOW);
         (, uint256 accruedAfterWarp) = IStakedUSDaiViewsTest(SUSDAI).loanRouterBalances();
         backgroundRate = (accruedAfterWarp - accruedBeforeWarp) * FIXED_POINT_SCALE / CALIBRATION_WINDOW;
+
+        // The real contract already carries a large pre-existing accrued balance from actual
+        // protocol history (real loans, real elapsed time) - the ground-truth ledger must start
+        // from THIS absolute baseline, not from zero, since _actualAccrued() always reads the
+        // full absolute value, never just the delta since our test began.
+        baselineAccruedRaw = accruedAfterWarp * FIXED_POINT_SCALE;
 
         t0 = uint64(block.timestamp);
     }
@@ -179,7 +186,7 @@ contract StakedUSDaiAccrualAttackTest is Test {
     }
 
     function _groundTruthAccrued() internal view returns (uint256 total) {
-        total = backgroundRate * (block.timestamp - t0);
+        total = baselineAccruedRaw + backgroundRate * (block.timestamp - t0);
         for (uint256 i; i < shadowLoans.length; i++) {
             if (shadowLoans[i].open) {
                 total += shadowLoans[i].rate * (block.timestamp - shadowLoans[i].lastTouch);
